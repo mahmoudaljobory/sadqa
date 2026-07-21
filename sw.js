@@ -1,12 +1,14 @@
-/* عامل الخدمة — تثبيت (PWA) + تخزين واجهة + مصحف يعمل دون إنترنت + إشعارات */
-const CACHE = 'sadaqah-v13';
-const QURAN_CACHE = 'sadaqah-quran-v1';   /* نصوص المصحف والتفسير — لا يُحذف عند التحديث */
+/* عامل الخدمة — تثبيت (PWA) + تخزين واجهة + مصحف وتلاوة يعملان دون إنترنت + إشعارات */
+const CACHE = 'sadaqah-v14';
+const QURAN_CACHE = 'sadaqah-quran-v1';   /* نصوص المصحف والتفسير */
+const AUDIO_CACHE = 'sadaqah-audio-v1';   /* التلاوة الصوتية المحمّلة */
+const KEEP = [CACHE, QURAN_CACHE, AUDIO_CACHE];
 const SHELL = ['./','./index.html','./manifest.json',
   './assets/logo.svg','./assets/logo-192.png','./assets/logo-512.png','./assets/favicon-64.png'];
 self.addEventListener('install', e => { self.skipWaiting();
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).catch(()=>{})); });
 self.addEventListener('activate', e => { e.waitUntil(
-  caches.keys().then(k=>Promise.all(k.filter(x=>x!==CACHE && x!==QURAN_CACHE).map(x=>caches.delete(x)))).then(()=>self.clients.claim())); });
+  caches.keys().then(k=>Promise.all(k.filter(x=>KEEP.indexOf(x)===-1).map(x=>caches.delete(x)))).then(()=>self.clients.claim())); });
 self.addEventListener('fetch', e => { const req=e.request; if(req.method!=='GET') return;
   const url=new URL(req.url);
   if(url.origin!==self.location.origin){
