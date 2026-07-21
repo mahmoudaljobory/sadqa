@@ -249,6 +249,12 @@ html[data-theme="dark"] .logo-hero .hero-name{color:var(--gold-bright);}
 /* فاصل الأدوات أسفل المصحف */
 .tools-divider{display:flex;align-items:center;gap:12px;margin:26px 0 14px;color:var(--gold);font-family:'Amiri',serif;font-weight:700;font-size:1.1rem;}
 .tools-divider::before,.tools-divider::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,transparent,var(--border),transparent);}
+/* تحميل المصحف للعمل دون إنترنت */
+.offline-box{margin-top:14px;background:var(--surface-2);border:1px solid var(--border);border-radius:14px;padding:14px;}
+.offline-bar-track{height:12px;background:var(--bg-2);border-radius:999px;overflow:hidden;margin-top:12px;border:1px solid var(--border-soft);}
+.offline-bar{height:100%;width:0;background:linear-gradient(90deg,var(--gold),var(--gold-bright));transition:width .25s ease;}
+.offline-pct{text-align:center;font-weight:800;color:var(--gold);margin-top:8px;font-size:.95rem;letter-spacing:.5px;}
+.offline-note{font-size:.8rem;color:var(--ink-soft);margin:10px 0 0;line-height:1.7;}
 
 /* مستطيل الإهداء أسفل الشاشة */
 .db-backdrop{position:fixed;inset:0;background:rgba(10,20,17,.38);z-index:149;opacity:0;pointer-events:none;transition:opacity .35s ease;}
@@ -407,6 +413,15 @@ html[data-theme="dark"] .db-inner h2{color:var(--gold-bright);}
         </div>
         <p style="font-size:.82rem;color:var(--ink-soft);margin:4px 0 0;">نصيحة: اسمع الآية وكرّرها، ثم فعّل «إخفاء النص» وحاول استرجاعها، وكرّر المقطع حتى يرسخ.</p>
       </div>
+    </div>
+
+    <div class="offline-box">
+      <button class="btn" id="offlineBtn" style="width:100%;">⬇️ تحميل المصحف كاملاً للعمل دون إنترنت</button>
+      <div id="offlineProgress" style="display:none;">
+        <div class="offline-bar-track"><div class="offline-bar" id="offlineBar"></div></div>
+        <div class="offline-pct" id="offlinePct">٠٪</div>
+      </div>
+      <p class="offline-note">يحفظ نصوص المصحف كاملة على جهازك لقراءته دون إنترنت. (التلاوة الصوتية تبقى تحتاج اتصالاً).</p>
     </div>
   </section>
 
@@ -1152,6 +1167,68 @@ window.addEventListener('appinstalled',()=>{store.set('installed',true);fab.clas
 })();
 }
 
+/* ===== features/offline.js ===== */
+/* features/offline.js — تحميل نصوص المصحف كاملة وحفظها للعمل دون إنترنت.
+   يخزّن الـ 114 سورة في كاش مخصّص يقرأ منه عامل الخدمة لاحقاً بلا اتصال. */
+
+const QURAN_CACHE = 'sadaqah-quran-v1';
+let downloading = false;
+
+function initOffline(){
+  const btn = $('#offlineBtn'); if(!btn) return;
+  if(!('caches' in window)){ btn.closest('.offline-box')?.remove(); return; }
+  refreshLabel();
+  btn.addEventListener('click', downloadAll);
+}
+
+function refreshLabel(){
+  const btn = $('#offlineBtn'); if(!btn) return;
+  btn.textContent = store.get('quranDownloaded', false)
+    ? '✓ المصحف محفوظ للعمل دون إنترنت (اضغط لإكمال/تحديث)'
+    : '⬇️ تحميل المصحف كاملاً للعمل دون إنترنت';
+}
+
+async function downloadAll(){
+  if(downloading) return;
+  if(!('caches' in window)){ toast('التخزين دون إنترنت غير مدعوم في متصفحك'); return; }
+  if(navigator.onLine === false){ toast('تحتاج اتصالاً بالإنترنت لتحميل المصحف'); return; }
+  downloading = true;
+  const btn = $('#offlineBtn'), wrap = $('#offlineProgress'), bar = $('#offlineBar'), pct = $('#offlinePct');
+  if(wrap) wrap.style.display = 'block';
+  if(btn) btn.disabled = true;
+  let done = 0, failed = 0; const total = SURAHS_META.length;
+  try{
+    const cache = await caches.open(QURAN_CACHE);
+    for(const s of SURAHS_META){
+      const url = RISAN_BASE + '/' + s.number + '.json';
+      try{
+        const hit = await cache.match(url);
+        if(!hit){
+          const res = await fetch(url, { cache:'no-store' });
+          if(res && res.ok) await cache.put(url, res.clone()); else failed++;
+        }
+      }catch{ failed++; }
+      done++;
+      const p = Math.round(done / total * 100);
+      if(bar) bar.style.width = p + '%';
+      if(pct) pct.textContent = ar(done) + '/' + ar(total) + ' (' + ar(p) + '٪)';
+    }
+    if(failed === 0){
+      store.set('quranDownloaded', true); store.set('quranDownloadedAt', Date.now());
+      toast('تم حفظ المصحف كاملاً — يعمل الآن دون إنترنت ✅');
+    } else {
+      toast('اكتمل التحميل مع تعذّر ' + ar(failed) + ' سورة — اضغط الزر لإكمالها');
+    }
+  }catch{
+    toast('تعذّر التحميل — تحقّق من الإنترنت وأعد المحاولة');
+  }finally{
+    downloading = false;
+    if(btn) btn.disabled = false;
+    refreshLabel();
+    setTimeout(() => { const w = $('#offlineProgress'); if(w) w.style.display = 'none'; }, 1600);
+  }
+}
+
 /* ===== ui/theme.js ===== */
 /* ui/theme.js — تبديل الوضع الليلي/النهاري (يبدأ تلقائياً). */
 
@@ -1209,6 +1286,7 @@ initTasbih();
 initShare();
 initInstall();
 initNotifications();
+initOffline();
 analyticsInit();
 
 // فتح القسم الأخير أو المصحف افتراضياً
