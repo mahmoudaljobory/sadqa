@@ -349,6 +349,21 @@ html[data-theme="dark"] .stat-card .st-num{color:var(--gold-bright);}
 .stat-card.st-due{border-color:var(--gold);box-shadow:0 0 0 2px var(--gold-soft);}
 .stat-card.st-due .st-num{color:var(--gold);}
 
+/* خطة ختم الحفظ */
+.plan-box{background:var(--surface);border:1px solid var(--border);border-right:4px solid var(--gold);border-radius:14px;padding:16px;margin-bottom:14px;box-shadow:0 3px 10px var(--shadow);}
+.plan-title{font-family:'Amiri',serif;font-weight:700;color:var(--primary);font-size:1.15rem;margin-bottom:8px;}
+html[data-theme="dark"] .plan-title{color:var(--gold-bright);}
+.plan-progress{height:14px;background:var(--bg-2);border:1px solid var(--border-soft);border-radius:999px;overflow:hidden;margin:10px 0;}
+.plan-bar{height:100%;width:0;background:linear-gradient(90deg,var(--gold),var(--gold-bright));transition:width .4s ease;}
+.plan-meta{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;font-size:.85rem;color:var(--ink-soft);margin-bottom:12px;}
+.plan-meta b{color:var(--gold);font-size:1rem;}
+.plan-today{background:var(--surface-2);border:1px solid var(--border-soft);border-radius:12px;padding:12px;}
+.pt-label{font-size:.8rem;color:var(--ink-soft);font-weight:600;}
+.pt-seg{font-family:'Amiri',serif;font-weight:700;font-size:1.2rem;color:var(--primary);margin:4px 0 10px;}
+html[data-theme="dark"] .pt-seg{color:var(--gold-bright);}
+.plan-actions{display:flex;gap:8px;flex-wrap:wrap;}
+.plan-fin{text-align:center;font-family:'Amiri',serif;font-weight:700;color:var(--gold);line-height:1.9;}
+
 </style>
 </head>
 <body>
@@ -433,6 +448,7 @@ html[data-theme="dark"] .stat-card .st-num{color:var(--gold-bright);}
     </div>
 
     <div class="stat-grid" id="hifzStats"></div>
+    <div id="planBox" class="plan-box"></div>
     <div id="reviewList" class="review-list"></div>
 
     <div class="card" style="margin-bottom:14px;">
@@ -1406,6 +1422,15 @@ function exitSession(){
   renderHifzText(); renderReviewList(); renderStats();
 }
 
+/* بدء مقطع من «خطة ختم الحفظ»: يحمّل السورة ويضبط المدى ويبدأ التلقين */
+async function startPlanSegment(surah, from, to){
+  const sel = $('#hifzSurah'); if(sel) sel.value = surah;
+  await loadHifz(surah);
+  if($('#rangeFrom')) $('#rangeFrom').value = from;
+  if($('#rangeTo')) $('#rangeTo').value = to;
+  startSession('talqin');
+}
+
 /* ---------------- لوحة «مراجعة اليوم» ---------------- */
 function renderReviewList(){
   const box=$('#reviewList'); if(!box)return;
@@ -1586,6 +1611,151 @@ function exit(){
   vt.active=false; stopMic();
   const bar=$('#tasmeeBar'); if(bar) bar.style.display='none';
   if(hifzState.data) renderHifzText();
+}
+
+/* ===== features/plan.js ===== */
+/* features/plan.js — «خطة ختم الحفظ»: تحدّد هدفاً (جزء عمّ/تبارك/سورة/المصحف)
+   ووتيرة يومية (عدد الآيات)، فيقسّمه التطبيق مقاطع يومية دون كسر حدود السور،
+   ويعرض مقطع اليوم مع شريط تقدّم وأيام متبقية وسلسلة أيام، ويربط كل مقطع مُنجَز
+   بالمراجعة المتباعدة تلقائياً. */
+
+/* أهداف جاهزة: نطاق السور [من، إلى] */
+const GOALS = {
+  juz30:  { name:'جزء عمّ (من النبأ إلى الناس)', s:78,  e:114 },
+  juz29:  { name:'جزء تبارك (من الملك إلى المرسلات)', s:67, e:77 },
+  short:  { name:'قصار المفصّل (من الضحى إلى الناس)', s:93, e:114 },
+  baqara: { name:'سورة البقرة', s:2, e:2 },
+  kahf:   { name:'سورة الكهف', s:18, e:18 },
+  yaseen: { name:'سورة يس', s:36, e:36 },
+  full:   { name:'المصحف كاملاً', s:1, e:114 }
+};
+
+function todayKey(){ const d = new Date(); return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate(); }
+function get(){ return store.get('plan', null); }
+function set(p){ store.set('plan', p); }
+
+function initPlan(){
+  $('#planCreateBtn')  && $('#planCreateBtn').addEventListener('click', createPlan);
+  $('#planStartBtn')   && $('#planStartBtn').addEventListener('click', startTodaySegment);
+  $('#planDoneBtn')    && $('#planDoneBtn').addEventListener('click', () => markTodayDone(true));
+  $('#planResetBtn')   && $('#planResetBtn').addEventListener('click', resetPlan);
+  // تعبئة قائمة السور المفردة للهدف المخصّص
+  const sel = $('#planSurahSel');
+  if(sel && !sel.options.length){
+    sel.innerHTML = '<option value="">— أو اختر سورة —</option>' +
+      SURAHS_META.map(s => `<option value="${s.number}">${ar(s.number)}. ${s.name}</option>`).join('');
+  }
+}
+
+/* توليد المقاطع: يمرّ على آيات السور في النطاق، ويقطع كل «آياتٍ في اليوم» دون تجاوز نهاية السورة */
+function buildSegments(sStart, sEnd, perDay){
+  const segs = [];
+  for(let s = sStart; s <= sEnd; s++){
+    const total = SURAHS_META[s-1].numberOfAyahs;
+    let from = 1;
+    while(from <= total){
+      const to = Math.min(from + perDay - 1, total);
+      segs.push({ surah:s, from, to });
+      from = to + 1;
+    }
+  }
+  return segs;
+}
+
+function createPlan(){
+  const goalKey = $('#planGoalSel').value;
+  const surahPick = +($('#planSurahSel') && $('#planSurahSel').value) || 0;
+  const perDay = +$('#planPerDay').value || 5;
+  let sStart, sEnd, name;
+  if(surahPick){ sStart = sEnd = surahPick; name = 'سورة ' + SURAHS_META[surahPick-1].name; }
+  else { const g = GOALS[goalKey]; sStart = g.s; sEnd = g.e; name = g.name; }
+  const segs = buildSegments(sStart, sEnd, perDay);
+  const plan = { name, perDay, sStart, sEnd, segments: segs, done: 0,
+                 startedAt: Date.now(), lastDoneKey: null, streak: 0 };
+  set(plan);
+  toast('تم إنشاء خطة «' + name + '» — ' + ar(segs.length) + ' يوماً بإذن الله 🌿');
+  renderPlan();
+}
+
+function resetPlan(){
+  if(!window.confirm('حذف الخطة الحالية والبدء من جديد؟ (لن تُحذف مراجعاتك المجدولة)')) return;
+  store.set('plan', null); renderPlan();
+}
+
+async function startTodaySegment(){
+  const p = get(); if(!p) return;
+  const seg = p.segments[p.done]; if(!seg){ toast('أتممت الخطة — بارك الله فيك 🎉'); return; }
+  await startPlanSegment(seg.surah, seg.from, seg.to);
+  toast('مقطع اليوم: ' + SURAHS_META[seg.surah-1].name + ' ' + ar(seg.from) + '–' + ar(seg.to));
+}
+
+function markTodayDone(){
+  const p = get(); if(!p) return;
+  const seg = p.segments[p.done]; if(!seg){ return; }
+  // ربط بالمراجعة المتباعدة
+  scheduleSRS(seg.surah, seg.from, seg.to, true, SURAHS_META[seg.surah-1].name);
+  // سلسلة الأيام
+  const tk = todayKey();
+  if(p.lastDoneKey !== tk){
+    const y = new Date(); y.setDate(y.getDate()-1);
+    const yk = y.getFullYear()+'-'+(y.getMonth()+1)+'-'+y.getDate();
+    p.streak = (p.lastDoneKey === yk) ? (p.streak||0)+1 : 1;
+    p.lastDoneKey = tk;
+  }
+  p.done += 1;
+  set(p);
+  if(p.done >= p.segments.length){ toast('🎉 أتممت خطة «' + p.name + '» — نسأل الله أن يجعله حجّة لك'); }
+  else { toast('أحسنت! مقطع اليوم مُنجَز ✓ — بقي ' + ar(p.segments.length - p.done) + ' يوماً'); }
+  renderPlan();
+}
+
+function renderPlan(){
+  const box = $('#planBox'); if(!box) return;
+  const p = get();
+  if(!p){
+    box.innerHTML = `
+      <div class="plan-setup">
+        <div class="plan-title">🎯 خطة ختم الحفظ</div>
+        <p class="hs-desc">حدّد هدفك ووتيرتك اليومية، فيقسّمه التطبيق مقاطع يومية ويتابع إنجازك ومراجعتك.</p>
+        <div class="controls-row">
+          <div class="field"><label for="planGoalSel">الهدف</label>
+            <select id="planGoalSel">${Object.keys(GOALS).map(k=>`<option value="${k}">${GOALS[k].name}</option>`).join('')}</select></div>
+          <div class="field"><label for="planSurahSel">سورة مخصّصة</label><select id="planSurahSel"></select></div>
+          <div class="field" style="flex:1 1 120px;"><label for="planPerDay">آيات كل يوم</label>
+            <select id="planPerDay"><option>3</option><option selected>5</option><option>8</option><option>10</option><option>15</option><option>20</option></select></div>
+        </div>
+        <button class="btn btn-primary" id="planCreateBtn" style="width:100%;">إنشاء الخطة</button>
+      </div>`;
+    initPlan();
+    return;
+  }
+  const total = p.segments.length, done = p.done, pct = Math.round(done/total*100);
+  const seg = p.segments[done];
+  const finished = done >= total;
+  box.innerHTML = `
+    <div class="plan-title">🎯 خطة: ${p.name}</div>
+    <div class="plan-progress"><div class="plan-bar" style="width:${pct}%"></div></div>
+    <div class="plan-meta">
+      <span>أُنجز: <b>${ar(done)}</b>/${ar(total)}</span>
+      <span>متبقٍّ: <b>${ar(total-done)}</b> يوم</span>
+      <span>🔥 سلسلة: <b>${ar(p.streak||0)}</b></span>
+      <span>${ar(pct)}٪</span>
+    </div>
+    ${finished
+      ? `<div class="plan-today plan-fin">🎉 أتممت الخطة كاملة — تقبّل الله وجعله في ميزان حسنات المرحوم</div>`
+      : `<div class="plan-today">
+           <div class="pt-label">📌 مقطع اليوم</div>
+           <div class="pt-seg">${SURAHS_META[seg.surah-1].name} · الآيات ${ar(seg.from)}–${ar(seg.to)}</div>
+           <div class="plan-actions">
+             <button class="btn btn-primary" id="planStartBtn">🖋 ابدأ حفظ مقطع اليوم</button>
+             <button class="btn" id="planDoneBtn">✓ أنجزتُ اليوم</button>
+           </div>
+         </div>`}
+    <button class="btn btn-sm" id="planResetBtn" style="margin-top:10px;">إعادة تعيين الخطة</button>`;
+  // إعادة الربط
+  $('#planStartBtn') && $('#planStartBtn').addEventListener('click', startTodaySegment);
+  $('#planDoneBtn')  && $('#planDoneBtn').addEventListener('click', () => markTodayDone(true));
+  $('#planResetBtn') && $('#planResetBtn').addEventListener('click', resetPlan);
 }
 
 /* ===== features/adhkar.js ===== */
@@ -1883,7 +2053,7 @@ function initFontSize(){
 
 // ربط أقسام التنقّل بمُهيّئاتها (كل قسم معزول)
 registerViewHook('quran',  initQuran);
-registerViewHook('hifz',   openHifzTab);
+registerViewHook('hifz',   () => { openHifzTab(); renderPlan(); });
 registerViewHook('tafsir', initTafsir);
 registerViewHook('prayer', initPrayer);
 
@@ -1898,6 +2068,7 @@ initNotifications();
 initOffline();
 initHifz();
 initTasmee();
+initPlan();
 initFontSize();
 analyticsInit();
 

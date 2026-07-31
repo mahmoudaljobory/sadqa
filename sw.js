@@ -1,5 +1,5 @@
 /* عامل الخدمة — تثبيت (PWA) + تخزين واجهة + مصحف وتلاوة يعملان دون إنترنت + إشعارات */
-const CACHE = 'sadaqah-v17';
+const CACHE = 'sadaqah-v18';
 const QURAN_CACHE = 'sadaqah-quran-v1';   /* نصوص المصحف والتفسير */
 const AUDIO_CACHE = 'sadaqah-audio-v1';   /* التلاوة الصوتية المحمّلة */
 const KEEP = [CACHE, QURAN_CACHE, AUDIO_CACHE];
