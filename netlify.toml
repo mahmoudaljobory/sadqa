@@ -1,0 +1,14 @@
+# إعدادات النشر والأمان على Netlify
+[build]
+  publish = "."
+
+# ترويسات أمان تُطبّق على كل الصفحات
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "SAMEORIGIN"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "geolocation=(self), microphone=(self), camera=()"
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains"
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline' https://gc.zgo.at; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; media-src https://cdn.islamic.network; connect-src 'self' https://api.alquran.cloud https://cdn.islamic.network https://cdn.jsdelivr.net https://api.aladhan.com https://gc.zgo.at https://*.goatcounter.com; manifest-src 'self'; base-uri 'self'; frame-ancestors 'none'"
